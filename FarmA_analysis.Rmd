@@ -1,0 +1,363 @@
+---
+title: "Farm A SmartGuard Analysis"
+date: "11/5/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(comment = NA)
+```
+
+## About the data
+The data was filtered to consist of two groups, the SmartGuard (test) group and the control group. "small" will not be used in this analysis. **I will only be including DOF - Day 4 in this analysis.** 
+```{r, message=FALSE, warning=FALSE}
+library(readxl)
+library(dplyr)
+raw_data <- read_xlsx("/Users/ben/Documents/SwineTech/FarmA_data.xlsx",
+                      sheet = "Data Input Sheet",
+                      range = cell_rows(21:1118))
+
+# change parity ukn to be NA
+raw_data$Parity <- ifelse(raw_data$Parity...5 == "unk", NA, as.integer(raw_data$Parity...5))
+
+# remove unwanted cols
+drops <- c("Room #", "...3", "...13", "...15", "...42", "...43", "...45", "...47", "...49",
+           "Problem Litters", "...51", "Parity...52", "Coverage", "Parity...5", "...36", "...37",
+           "...38", "...39", "...40")
+raw_data <- raw_data[, !(names(raw_data) %in% drops)]
+
+# replace death NA's with 0's
+death_cols <- raw_data[, 13:30]
+death_cols[is.na(death_cols)] <- 0
+raw_data[, 13:30] <- death_cols 
+
+# separate smartguard and control groups
+smartguard <- filter(raw_data, `T or C` == "Test")
+control <- filter(raw_data, `T or C` == "Control")
+my_groups <- c("Control", "SmartGuard")
+```
+
+The table below shows the number of sows in each group for this trial.  
+```{r, warning=FALSE}
+# make a df of number of sows in each group
+n_df <- data.frame(Group = my_groups,
+                   Sows = c(nrow(control), nrow(smartguard)))
+
+# table
+kbl_n <- knitr::kable(n_df)
+kableExtra::kable_styling(kbl_n, full_width = FALSE)
+```
+
+The graphs below show that the number of born live + foster in each group are about the same as well as the average parity in each group.   
+```{r, out.width="55%", fig.show='hold', message=FALSE}
+library(ggplot2)
+
+# average liveborn
+cntrl_avg_liveborn <- round(mean(control$`Born Live`), 2)
+sg_avg_liveborn <- round(mean(smartguard$`Born Live`), 2)
+
+# average parity
+cntrl_avg_parity <- round(mean(control$Parity, na.rm = TRUE), 2)
+sg_avg_parity <- round(mean(smartguard$Parity, na.rm = TRUE), 2)
+
+# average born live + foster
+cntrl_avg_bl_foster <- round(mean(control$`BL + Foster`), 2)
+sg_avg_bl_foster <- round(mean(smartguard$`BL + Foster`), 2)
+
+# df
+liveborn_df <- data.frame(Group = my_groups,
+                          Liveborn = c(cntrl_avg_liveborn, sg_avg_liveborn))
+bl_foster_df <- data.frame(Group = my_groups,
+                           BL_foster = c(cntrl_avg_bl_foster, sg_avg_bl_foster))
+
+parity_df <- data.frame(Group = my_groups,
+                        Parity = c(cntrl_avg_parity, sg_avg_parity))
+
+# graph
+ggplot(liveborn_df, aes(x = Group, y = Liveborn, fill = Group)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = Liveborn), vjust = 0, size = 5) +
+    ggtitle("Average Liveborn")
+
+ggplot(bl_foster_df, aes(x = Group, y = BL_foster, fill = Group)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = BL_foster), vjust = 0, size = 5) +
+    ggtitle("Average Born Live + Foster")
+
+ggplot(parity_df, aes(x = Group, y = Parity, fill = Group)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = Parity), vjust = 0, size = 5) +
+    ggtitle("Average Parity", subtitle = "Excluding Unknown Parities")
+```
+
+Let's see if there is a significant difference in the amount of born live + foster piglets in each group. I will be using a Wilcoxon Signed Rank Test for a difference in medians.  
+Note: I am holding the assumption that the born live + foster distributions are the same in both groups  
+
+Wilcoxon Signed Rank Test for a difference in median born live + foster of the control and SmartGuard groups:  
+H~0~: median~control~ = median~SmartGuard~  
+H~A~: median~control~ $\neq$ median~SmartGuard~   
+Significance level = 0.05   
+```{r}
+(t1 <- wilcox.test(control$`BL + Foster`, smartguard$`BL + Foster`, alternative = "two.sided"))
+```
+Since the p-value of the Wilcoxon test is `r round(t1$p.value, 2)`, we fail to reject the null hypothesis. Assuming that the two groups have the same median number of born live + fostered piglets, there is about a 20% chance that we sampled sows with a difference of 0.08 born live + fostered piglets between the two groups. Thus, we can conclude that the median born live + fostered piglets of the control group is not significantly different than the median of the SmartGuard group.  
+Since there isn't a significant difference of born live + foster piglets in either group, we can proceed with **comparing deaths based on born live + foster** for the remainder of this analysis.  
+
+## Pre-Weaning Mortality
+The graph below shows the average deaths per piglet for all death reasons over each day. These results can be interpreted as the chance a pig has of dying from the given death reason. For example, piglets in the control group on DOF have a 0.012 or 1.2% chance of being laid on. The piglets in the SmartGuard group  on DOF have a 0.009 or 0.9% chance of being laid on.
+  
+```{r, out.width="95%", fig.align='center'}
+# get total born live + foster
+cntrl_bl_foster <- sum(control$`BL + Foster`)
+sg_bl_foster <- sum(smartguard$`BL + Foster`)
+
+# DOF avg. deaths
+cntrl_dof_lo <- round(sum(control$DOF_LO) / cntrl_bl_foster, 3)
+cntrl_dof_lv <- round(sum(control$DOF_LV) / cntrl_bl_foster, 3)
+cntrl_dof_oth <- round(sum(control$DOF_OTH) / cntrl_bl_foster, 3)
+
+sg_dof_lo <- round(sum(smartguard$DOF_LO) / sg_bl_foster, 3)
+sg_dof_lv <- round(sum(smartguard$DOF_LV) / sg_bl_foster, 3)
+sg_dof_oth <- round(sum(smartguard$DOF_OTH) / sg_bl_foster, 3)
+
+# day 1 deaths
+cntrl_1_lo <- round(sum(control$day1_LO) / cntrl_bl_foster, 3)
+cntrl_1_lv <- round(sum(control$day1_LV) / cntrl_bl_foster, 3)
+cntrl_1_oth <- round(sum(control$day1_OTH) / cntrl_bl_foster, 3)
+
+sg_1_lo <- round(sum(smartguard$day1_LO) / sg_bl_foster, 3)
+sg_1_lv <- round(sum(smartguard$day1_LV) / sg_bl_foster, 3)
+sg_1_oth <- round(sum(smartguard$day1_OTH) / sg_bl_foster, 3)
+
+# day 3 deaths
+cntrl_2_lo <- round(sum(control$day2_LO) / cntrl_bl_foster, 3)
+cntrl_2_lv <- round(sum(control$day2_LV) / cntrl_bl_foster, 3)
+cntrl_2_oth <- round(sum(control$day2_OTH) / cntrl_bl_foster, 3)
+
+sg_2_lo <- round(sum(smartguard$day2_LO) / sg_bl_foster, 3)
+sg_2_lv <- round(sum(smartguard$day2_LV) / sg_bl_foster, 3)
+sg_2_oth <- round(sum(smartguard$day2_OTH) / sg_bl_foster, 3)
+
+# day 3 deaths
+cntrl_3_lo <- round(sum(control$day3_LO) / cntrl_bl_foster, 3)
+cntrl_3_lv <- round(sum(control$day3_LV) / cntrl_bl_foster, 3)
+cntrl_3_oth <- round(sum(control$day3_OTH) / cntrl_bl_foster, 3)
+
+sg_3_lo <- round(sum(smartguard$day3_LO) / sg_bl_foster, 3)
+sg_3_lv <- round(sum(smartguard$day3_LV) / sg_bl_foster, 3)
+sg_3_oth <- round(sum(smartguard$day3_OTH) / sg_bl_foster, 3)
+
+# day 4 deaths
+cntrl_4_lo <- round(sum(control$day4_LO) / cntrl_bl_foster, 3)
+cntrl_4_lv <- round(sum(control$day4_LV) / cntrl_bl_foster, 3)
+cntrl_4_oth <- round(sum(control$day4_OTH) / cntrl_bl_foster, 3)
+
+sg_4_lo <- round(sum(smartguard$day4_LO) / sg_bl_foster, 3)
+sg_4_lv <- round(sum(smartguard$day4_LV)/ sg_bl_foster, 3)
+sg_4_oth <- round(sum(smartguard$day4_OTH) / sg_bl_foster, 3)
+
+# create df
+all_deaths_df <- data.frame(Group = rep(my_groups, each = 15),
+                            Death_Reason = rep(c("Lay On", "Low Viability", "Other"), 10),
+                            Day = rep(c("DOF", "Day 1", "Day 2", "Day 3", "Day 4"), 
+                                      each = 3),
+                            Avg_Deaths = c(cntrl_dof_lo, cntrl_dof_lv, cntrl_dof_oth,
+                                          cntrl_1_lo,cntrl_1_lv, cntrl_1_oth, cntrl_2_lo,
+                                          cntrl_2_lv,cntrl_2_oth,cntrl_3_lo, cntrl_3_lv, 
+                                          cntrl_3_oth, cntrl_4_lo,cntrl_4_lv, cntrl_4_oth,
+                                          sg_dof_lo, sg_dof_lv,sg_dof_oth,sg_1_lo, sg_1_lv, 
+                                          sg_1_oth, sg_2_lo, sg_2_lv, sg_2_oth, sg_3_lo,sg_3_lv, 
+                                          sg_3_oth, sg_4_lo, sg_4_lv, sg_4_oth))
+
+# make factor so order of days stays correct
+all_deaths_df$Day <- factor(all_deaths_df$Day,
+                            levels = c("DOF", "Day 1", "Day 2", "Day 3", "Day 4"))
+
+# facet plot
+ggplot(all_deaths_df, aes(x = Death_Reason, y = Avg_Deaths, fill = Group)) +
+  geom_bar(stat = 'identity', position = position_dodge2()) +
+  geom_text(aes(label = Avg_Deaths), position = position_dodge(width = 1), 
+            vjust = .05, size = 2.5) +
+  ggtitle("Deaths Per Piglet", subtitle = "Farrow - Day 4") +
+  scale_x_discrete(guide = guide_axis(n.dodge = 2)) +
+  facet_wrap(~Day)
+```
+
+### Average Total Deaths Per Piglet
+The graph below shows the average deaths per piglet for each group when all days (DOF - day4) are combined. Piglets in the control group have a 4.1% chance of being laid on, whereas piglets in the SmartGuard group have a 3.0% chance of being laid on. We can notice that the chance of low viability and other deaths are rougly the same between the two groups, whereas the difference between lay-ons in the two groups is more dramatic.  
+The graph on the right shows all 3 death reasons combined. The right graph can be interpreted as a piglet in the control group has a 7.5% chance of dying in the first 4 days, whereas a piglet in the SmartGuard group has a 6.5% chance of dying in the first 4 days.     
+```{r, out.width="53%", fig.show='hold'}
+# combine days
+# lay-ons
+cntrl_lo <- c(control$DOF_LO, control$day1_LO, control$day2_LO, control$day3_LO, control$day4_LO)
+sg_lo <- c(smartguard$DOF_LO, smartguard$day1_LO, smartguard$day2_LO, smartguard$day3_LO,
+           smartguard$day4_LO)
+
+# low viability
+cntrl_lv <- c(control$DOF_LV, control$day1_LV, control$day2_LV, control$day3_LV, control$day4_LV)
+sg_lv <- c(smartguard$DOF_LV, smartguard$day1_LV, smartguard$day2_LV, smartguard$day3_LV, 
+           smartguard$day4_LV)
+
+# oth
+cntrl_oth <- c(control$DOF_OTH, control$day1_OTH, control$day2_OTH, control$day3_OTH,
+               control$day4_OTH)
+sg_oth <- c(smartguard$DOF_OTH, smartguard$day1_OTH, smartguard$day2_OTH, smartguard$day3_OTH,
+               smartguard$day4_OTH)
+
+# averages
+cntrl_avg_lo <- round(sum(cntrl_lo) / cntrl_bl_foster, 3)
+cntrl_avg_lv <- round(sum(cntrl_lv) / cntrl_bl_foster, 3)
+cntrl_avg_oth <- round(sum(cntrl_oth) / cntrl_bl_foster, 3)
+
+sg_avg_lo <- round(sum(sg_lo) / sg_bl_foster, 3) 
+sg_avg_lv <- round(sum(sg_lv) / sg_bl_foster, 3)
+sg_avg_oth <- round(sum(sg_oth) / sg_bl_foster, 3)
+
+total_cntrl_deaths <- round(sum(cntrl_lo, cntrl_lv, cntrl_oth) / cntrl_bl_foster, 3)
+total_sg_deaths <- round(sum(sg_lo, sg_lv, sg_oth) / sg_bl_foster, 3)
+
+# df
+avg_deaths_df <- data.frame(Group = rep(my_groups, each = 3),
+                            Death_Reason = rep(c("Lay On", "Low Viability", "Other"), 2),
+                            Avg_Deaths = c(cntrl_avg_lo, cntrl_avg_lv, cntrl_avg_oth,
+                                           sg_avg_lo, sg_avg_lv, sg_avg_oth))
+total_deaths_df <- data.frame(Group = my_groups,
+                              Avg_Deaths = c(total_cntrl_deaths, total_sg_deaths))
+
+# graph
+ggplot(avg_deaths_df, aes(x = Death_Reason, y = Avg_Deaths, fill = Group)) +
+  geom_bar(stat = "identity", position = position_dodge2()) +
+  geom_text(aes(label = Avg_Deaths), position = position_dodge2(.9), vjust = -.1, size = 4) +
+  ggtitle("Avg. Deaths Per Piglet", subtitle = "Farrow - Day 4") 
+  #scale_x_discrete(guide = guide_axis(n.dodge = 2))
+
+ggplot(total_deaths_df, aes(x = Group, y = Avg_Deaths, fill = Group)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Avg_Deaths), vjust = -.1, size = 4.5) +
+  ggtitle("Avg. Total Deaths Per Piglet", subtitle = "Farrow - Day 4")
+  
+```
+
+
+## Average Piglet Loss Per Litter Due to Lay-ons  
+The table below shows the average piglet loss per litter due to lay-ons for each group. To compute this, I will be using the following formula:
+$\frac{NP * LOPP}{NS}$   
+NP = Number of piglets in each group    
+LOPP = Average lay-ons per piglet from DOF - Day4  
+NS = Number of Sows in each group  
+
+```{r}
+# total piglets 
+cntrl_nPigs <- sum(control$`BL + Foster`)
+sg_nPigs <- sum(smartguard$`BL + Foster`)
+
+# avg piglet loss per litter (cntrlnPigs * avg layons per piglet in cntrl group)
+cntrl_perlitterloss <- round((cntrl_nPigs * 0.041) / nrow(control), 3)
+sg_perlitterloss <- round((sg_nPigs * 0.030) / nrow(smartguard), 3)
+
+# per litter loss difference
+pll_diff <- cntrl_perlitterloss - sg_perlitterloss
+# df
+perlitterloss_df <- data.frame(Group = my_groups,
+                               Avg_Litter_Loss = c(cntrl_perlitterloss, sg_perlitterloss))
+
+# table
+kbl_pll <- knitr::kable(perlitterloss_df)
+kableExtra::kable_styling(kbl_pll, full_width = FALSE)
+```
+
+We can see that the average piglet loss per litter in the SmartGuard group is about `r pll_diff` piglets per litter less.    
+
+## Significant Differences in Deaths
+When testing for significant differences in deaths, I will be combining all of the days in the trial (DOF - day 4). Deaths are a discrete variable and the distribution is skewed right. From the graphs below, we can see the distribution of lay-ons are roughly the same in the control and SmartGuard groups. This is also true for low-viability and "other" deaths as well. Thus, I will be holding the assumption that both groups' deaths follow the same distribution. Due to these factors, the Wilcoxon Signed Rank Test is most appropriate for comparing the medians of the two sample groups. 
+```{r, fig.show='hold', out.width="52%"}
+# control lo distribution
+ggplot() +
+  aes(cntrl_lo) +
+  geom_bar(fill = "#F8766D", color = "black") +
+  xlab("Lay-ons") +
+  ggtitle("Distribution of Control Lay-ons")
+
+# smartguard lo distribution
+ggplot() + 
+  aes(sg_lo) +
+  geom_bar(fill = "#00BFC4", color = "black") +
+  xlab("Lay-ons") +
+  ggtitle("Distribution of Smartguard Lay-ons")
+```
+
+
+## Wilcoxon Signed Rank Test
+### Low-Viability Deaths  
+First, let's see if there is a significant difference in the median low-viability and other deaths between the two groups.  
+
+Wilcoxon Rank Sum Test for a difference between the median low-viability deaths of the control and SmartGuard groups over all days in the trial (DOF - day4):    
+H~0~: median~control~ = median~SmartGuard~    
+H~A~: median~control~ $\neq$ median~SmartGuard~  
+Significance level: 0.05 
+```{r}
+(wil_lv <- wilcox.test(cntrl_lv, sg_lv, alternative = "two.sided"))
+```
+We can see the p-value is `r round(wil_lv$p.value, 2)`, so we fail to reject the null hypothesis. There is not a significant difference between the median low-viability deaths of the control and Smartguard groups.  
+
+### Other Deaths  
+Next, we will test to see if there is a difference in median "other" deaths.  
+
+Wilcoxon Rank Sum Test for a difference between the median "other" deaths of the control and SmartGuard groups over all days in the trial (DOF - day4):    
+H~0~: median~control~ = median~SmartGuard~    
+H~A~: median~control~ $\neq$ median~SmartGuard~  
+Significance level: 0.05 
+```{r}
+(wil_oth <- wilcox.test(cntrl_oth, sg_oth, alternative = "two.sided"))
+```
+We can see that the p-value is `r round(wil_oth$p.value, 2)`, so we fail to reject the null hypothesis. There is not a significant difference between the median "other" deaths of the control and Smartguard groups.  
+
+### Lay-on Reduction Using SmartGuard 
+For lay-ons, we will test to see if the SmartGuard group has **significantly less** lay-ons than the control group.   
+Wilcoxon Rank Sum Test for a difference between the median lay-ons of the control and SmartGuard groups over all days in the trial:    
+H~0~: median~SmartGuard~ = median~Control~    
+H~A~: median~SmartGuard~ < median~Control~  
+Significance level: 0.05 
+```{r}
+(wil_lo <- wilcox.test(sg_lo, cntrl_lo, alternative = "less"))
+```
+The **p-value** for the median of the Smartguard lay-ons in comparison to the control groups lay-ons is **`r round(wil_lo$p.value, 3)`**, so we will reject the null hypothesis. The chance of obtaining two sample medians of piglet lay-ons at least as far apart as we did is `r round(wil_lo$p.value, 3)*100`%. This means that median lay-ons when sows are using SmartGuard is significantly less than median lay-ons for sows not wearing SmartGuard at a significance level of 0.05.    
+Again, we can notice that there is not a significant difference between low-viability and other deaths between the two groups, however there is a very significant difference between lay-ons in the two groups.    
+
+## Lay-Ons Per Sow By Parity   
+The graph below shows the average number of lay-ons per sow by parity from DOF to day 4. This graph excludes unknown parities.  
+```{r, warning=FALSE, out.width="90%", fig.align='center'}
+# get lay-ons per SOW by parity for each group
+# remove NA parity rows
+cntrl_lo_parity_sow <- control %>%
+                  filter(!is.na(Parity)) %>%
+                  group_by(Parity) %>%
+                  summarize(layons = round(
+                    sum(DOF_LO, day1_LO, day2_LO, day3_LO, day4_LO) / n(), 2))
+
+sg_lo_parity_sow <- smartguard %>%
+                filter(!is.na(Parity)) %>%
+                group_by(Parity) %>%
+                summarize(layons = round(
+                  sum(DOF_LO, day1_LO, day2_LO, day3_LO, day4_LO) / n(), 2))
+
+
+# add a 10th row to control since 1 more row in sg
+cntrl_lo_parity_sow[nrow(cntrl_lo_parity_sow) + 1,] = list(10, NA)
+
+# create one data frame
+my_parity_sow_df <- data.frame(Parity = rep(1:10, 2), 
+                           Group = rep(c("Control", "SmartGuard"), each=10),
+                           Layons = c(cntrl_lo_parity_sow$layons, sg_lo_parity_sow$layons))
+
+# graph
+ggplot(my_parity_sow_df, aes(x = Group, y = Layons, fill = Group)) +
+    geom_bar(stat = 'identity', position = position_dodge2()) +
+    geom_text(aes(label = Layons), position = position_dodge2(.9), vjust = 1, size = 3.0) +
+    ggtitle("Lay-ons Per Sow By Parity", subtitle = "From DOF - Day 4") +
+    facet_wrap(~Parity) +
+    scale_x_discrete(guide = guide_axis(n.dodge=3))      
+```
+
+
